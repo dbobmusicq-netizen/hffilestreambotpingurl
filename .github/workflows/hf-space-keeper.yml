@@ -18,6 +18,7 @@ jobs:
             "https://phoenixrealhere-nexastreambotlive.hf.space"
             "https://phoenixrealhere-nexastreambotlivepro.hf.space"
             "https://phoenixrealhere-nexastreambotlive02.hf.space"
+            "https://sgdthtefb-save-restricted-content-bot.hf.space"
           )
 
           MAX_RETRIES=20
