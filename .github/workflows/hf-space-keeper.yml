@@ -11,39 +11,57 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Ping HuggingFace Space (robust)
+      - name: Ping HuggingFace Spaces (multi)
         run: |
-          URL="https://phoenixrealhere-nexastreambotlive.hf.space"
+          # 🔹 Add all your HF Space URLs here
+          URLS=(
+            "https://phoenixrealhere-nexastreambotlive.hf.space"
+            "https://phoenixrealhere-nexastreambotlivepro.hf.space"
+            "https://phoenixrealhere-nexastreambotlive02.hf.space"
+          )
+
           MAX_RETRIES=20
           DELAY=15
 
-          echo "Starting HuggingFace Space health check..."
+          echo "Starting HuggingFace Spaces health check..."
 
-          for ((i=1;i<=MAX_RETRIES;i++))
+          for URL in "${URLS[@]}"
           do
-            echo "Attempt $i"
+            echo "----------------------------------------"
+            echo "Checking: $URL"
 
-            STATUS=$(curl \
-              -L \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --retry 5 \
-              --retry-delay 5 \
-              -s \
-              -o /dev/null \
-              -w "%{http_code}" \
-              "$URL?nocache=$(date +%s)")
+            SUCCESS=0
 
-            echo "HTTP Status: $STATUS"
+            for ((i=1;i<=MAX_RETRIES;i++))
+            do
+              echo "Attempt $i"
 
-            if [[ "$STATUS" == "200" || "$STATUS" == "302" ]]; then
-              echo "Space responded successfully."
-              exit 0
+              STATUS=$(curl \
+                -L \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --retry 5 \
+                --retry-delay 5 \
+                -s \
+                -o /dev/null \
+                -w "%{http_code}" \
+                "$URL?nocache=$(date +%s)")
+
+              echo "HTTP Status: $STATUS"
+
+              if [[ "$STATUS" == "200" || "$STATUS" == "302" ]]; then
+                echo "✅ Space responded successfully."
+                SUCCESS=1
+                break
+              fi
+
+              echo "⏳ Not ready. Waiting $DELAY seconds..."
+              sleep $DELAY
+            done
+
+            if [[ "$SUCCESS" == "0" ]]; then
+              echo "❌ Failed to wake: $URL"
             fi
-
-            echo "Space not ready yet. Waiting $DELAY seconds..."
-            sleep $DELAY
           done
 
-          echo "Space did not respond after $MAX_RETRIES attempts."
-          exit 1
+          echo "All spaces checked."
