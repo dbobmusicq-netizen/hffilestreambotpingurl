@@ -1,69 +1,114 @@
-name: HuggingFace Space Keeper
+name: HuggingFace Multi-Space Awakener
 
 on:
   schedule:
-    - cron: "0 */12 * * *"   # every 12 hours
+    # Runs at minute 15 of every 12th hour to avoid top-of-hour cron queues
+    - cron: "15 */12 * * *"
   workflow_dispatch:
 
 jobs:
-  keep-space-awake:
+  ping-space:
+    name: Ping Space
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: "nexastreambotlive"
+            url: "https://phoenixrealhere-nexastreambotlive.hf.space"
+          - name: "nexastreambotlivepro"
+            url: "https://phoenixrealhere-nexastreambotlivepro.hf.space"
+          - name: "nexastreambotlive02"
+            url: "https://phoenixrealhere-nexastreambotlive02.hf.space"
+          - name: "mubot"
+            url: "https://sgdthtefb-mubot.hf.space"
+          - name: "compressbot"
+            url: "https://kishank987k-compressbot.hf.space"
 
     steps:
-      - name: Ping HuggingFace Spaces (multi)
+      - name: Ping and Wake Space
+        env:
+          SPACE_URL: ${{ matrix.target.url }}
+          SPACE_NAME: ${{ matrix.target.name }}
+          # Optional: add HF_TOKEN in repo Secrets if any space is Private
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # 🔹 Add all your HF Space URLs here
-          URLS=(
-            "https://phoenixrealhere-nexastreambotlive.hf.space"
-            "https://phoenixrealhere-nexastreambotlivepro.hf.space"
-            "https://phoenixrealhere-nexastreambotlive02.hf.space"
-            "https://sgdthtefb-mubot.hf.space"
-            "https://kishank987k-compressbot.hf.space"
-          )
+          echo "=================================================="
+          echo "Target: $SPACE_NAME"
+          echo "URL:    $SPACE_URL"
+          echo "=================================================="
 
-          MAX_RETRIES=20
-          DELAY=15
+          MAX_ATTEMPTS=6
+          DELAY=5
+          SUCCESS=0
+          CONSECUTIVE_404=0
 
-          echo "Starting HuggingFace Spaces health check..."
+          # Build auth header if secret exists
+          AUTH_HEADER=()
+          if [ -n "$HF_TOKEN" ]; then
+            AUTH_HEADER=(-H "Authorization: Bearer $HF_TOKEN")
+          fi
 
-          for URL in "${URLS[@]}"
-          do
-            echo "----------------------------------------"
-            echo "Checking: $URL"
+          for ((i=1; i<=MAX_ATTEMPTS; i++)); do
+            TIMESTAMP=$(date +%s%N)
+            TARGET_URI="$SPACE_URL?ping_id=$TIMESTAMP"
 
-            SUCCESS=0
+            echo "[Attempt $i/$MAX_ATTEMPTS] Probing $SPACE_NAME..."
 
-            for ((i=1;i<=MAX_RETRIES;i++))
-            do
-              echo "Attempt $i"
+            # Perform probe: extract HTTP code and total response time
+            RESPONSE=$(curl -s -L \
+              "${AUTH_HEADER[@]}" \
+              -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+              --connect-timeout 8 \
+              --max-time 15 \
+              -o /dev/null \
+              -w "%{http_code}:%{time_total}" \
+              "$TARGET_URI") || true
 
-              STATUS=$(curl \
-                -L \
-                --connect-timeout 10 \
-                --max-time 30 \
-                --retry 5 \
-                --retry-delay 5 \
-                -s \
-                -o /dev/null \
-                -w "%{http_code}" \
-                "$URL?nocache=$(date +%s)")
+            STATUS="${RESPONSE%%:*}"
+            LATENCY="${RESPONSE##*:}"
 
-              echo "HTTP Status: $STATUS"
+            echo "Response: HTTP $STATUS (${LATENCY}s)"
 
-              if [[ "$STATUS" == "200" || "$STATUS" == "302" ]]; then
-                echo "✅ Space responded successfully."
+            case "$STATUS" in
+              200|204|301|302|307|308)
+                echo " Space is awake, responsive, and serving traffic."
                 SUCCESS=1
                 break
-              fi
+                ;;
+              401|403)
+                echo " Server active (Authentication Required). Wake signal delivered."
+                SUCCESS=1
+                break
+                ;;
+              404)
+                ((CONSECUTIVE_404++))
+                if [ "$CONSECUTIVE_404" -ge 3 ]; then
+                  echo " Persistent 404. Verify space name, visibility, or build state."
+                  break
+                fi
+                ;;
+              500|502|503|504)
+                echo "⏳ Space container is building, waking, or spinning up..."
+                ;;
+              *)
+                echo "⏳ Network or connection issue (Code: $STATUS)."
+                ;;
+            esac
 
-              echo "⏳ Not ready. Waiting $DELAY seconds..."
-              sleep $DELAY
-            done
-
-            if [[ "$SUCCESS" == "0" ]]; then
-              echo "❌ Failed to wake: $URL"
+            if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Waiting ${DELAY}s before retry..."
+              sleep "$DELAY"
+              # Incremental backoff
+              DELAY=$((DELAY + 5))
             fi
           done
 
-          echo "All spaces checked."
+          if [ "$SUCCESS" -eq 1 ]; then
+            echo " Wake routine completed for $SPACE_NAME"
+            exit 0
+          else
+            echo " Space failed to reach ready state: $SPACE_NAME"
+            exit 1
+          fi
